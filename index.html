@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FloopyFly</title>
+  <style>
+    :root{--bg:#87ceeb;--ground:#d2b48c;--pipe:#2e8b57;--bird:#ffdd57}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+    .wrap{display:flex;align-items:center;justify-content:center;height:100%;background:linear-gradient(#a7e0ff, var(--bg));}
+    canvas{border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.25);background:linear-gradient(#bfe8ff, #87ceeb)}
+    .ui{position:absolute;top:16px;left:16px;color:#033; font-weight:700;text-shadow:0 1px 0 #fff6;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.6)}
+    .ui.right{left:auto;right:16px}
+    #overlay{position:absolute;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px}
+    .panel{background:rgba(255,255,255,.9);padding:14px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.15);text-align:center}
+    button{padding:10px 18px;border-radius:8px;border:0;background:#2e8b57;color:#fff;font-weight:700;cursor:pointer}
+    button:active{transform:translateY(1px)}
+    h1{margin:0;font-size:20px}
+    p{margin:6px 0 0}
+    @media (max-width:600px){canvas{width:92vw;height:65vh}}</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="position:relative">
+    <canvas id="game" width="480" height="640"></canvas>
+    <div class="ui" id="scoreUI">Score: 0</div>
+    <div class="ui right" id="highUI">High: 0</div>
+    <div id="overlay" style="left:0;right:0;top:0;bottom:0;pointer-events:none">
+      <div id="startPanel" class="panel" style="pointer-events:auto;">
+        <h1>FloopyFly</h1>
+        <p>Click / Tap / Space to flap. Avoid pipes.</p>
+        <button id="startBtn">Start</button>
+      </div>
+      <div id="gameOver" class="panel" style="display:none;pointer-events:auto;">
+        <h1 id="goTitle">Game Over</h1>
+        <p id="finalScore">Score: 0 &nbsp; High: 0</p>
+        <button id="retryBtn">Retry</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+// FloopyFly — single-file Flappy style game
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = canvas.width, H = canvas.height;
+// scale for crisp look on hi-dpi
+function resizeForDPR(){const dpr=window.devicePixelRatio||1;canvas.width = Math.floor(W*dpr);canvas.height = Math.floor(H*dpr);canvas.style.width = W+'px';canvas.style.height = H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);}resizeForDPR();
+
+// Game constants
+const GROUND_H = 80;
+const PIPE_W = 72;
+const GAP = 150;
+const PIPE_SPEED = 2.6;
+const BIRD_X = 110;
+
+// State
+let bird = {x:BIRD_X,y:H/2,vy:0,w:34,h:24,rot:0};
+let pipes = [];let frame=0;let score=0;let high=+localStorage.getItem('floopyfly_high')||0;let running=false;let gameOver=false;
+
+// audio via WebAudio (no external files)
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playTone(freq, duration, type='sine', gain=0.08){const o=audioCtx.createOscillator();const g=audioCtx.createGain();o.type=type;o.frequency.value=freq;g.gain.value=gain;o.connect(g);g.connect(audioCtx.destination);o.start();g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+duration);setTimeout(()=>{o.stop()},duration*1000+50)}
+function playFlap(){playTone(750,0.06,'sine',0.07);playTone(1200,0.03,'square',0.03)}
+function playHit(){playTone(120,0.18,'sawtooth',0.13);playTone(60,0.22,'sine',0.06)}
+
+// controls
+function flap(){if(!running){startGame()}bird.vy = -6.6;bird.rot = -0.8; playFlap();}
+window.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault(); flap()} if(e.key==='r' && gameOver){reset()}});
+canvas.addEventListener('mousedown',()=>flap());canvas.addEventListener('touchstart',e=>{e.preventDefault();flap()},{passive:false});
+
+// UI
+const scoreUI = document.getElementById('scoreUI');const highUI=document.getElementById('highUI');const startPanel=document.getElementById('startPanel');const startBtn=document.getElementById('startBtn');const gameOverPanel=document.getElementById('gameOver');const retryBtn=document.getElementById('retryBtn');const finalScore=document.getElementById('finalScore');
+startBtn.onclick = ()=>{startGame()};retryBtn.onclick = ()=>{reset();startGame()};
+
+function startGame(){if(audioCtx.state==='suspended')audioCtx.resume();running=true;gameOver=false;startPanel.style.display='none';gameOverPanel.style.display='none';pipes=[];score=0;bird.y=H/2;bird.vy=0;frame=0;}
+function reset(){running=false;gameOver=false;startPanel.style.display='block';gameOverPanel.style.display='none';scoreUI.textContent='Score: 0';}
+
+function spawnPipe(){const topH = Math.random()*(H-GROUND_H-PIPE_W-GAP-60)+40;pipes.push({x:W,top:topH,passed:false});}
+
+function update(){if(!running) return;frame++; // spawn
+if(frame%110===0) spawnPipe();
+// physics
+bird.vy += 0.34; bird.y += bird.vy; if(bird.vy>8) bird.vy=8; bird.rot = Math.max(Math.min(bird.vy/12,1),-1);
+// pipes movement
+for(let p of pipes){p.x -= PIPE_SPEED; if(!p.passed && p.x+PIPE_W < bird.x){p.passed=true; score++; scoreUI.textContent='Score: '+score; if(score>high){high=score; localStorage.setItem('floopyfly_high',high); highUI.textContent = 'High: '+high}}}
+// remove offscreen
+pipes = pipes.filter(p=>p.x+PIPE_W> -10);
+// collision with ground or ceiling
+if(bird.y+bird.h/2 >= H-GROUND_H){die()} if(bird.y - bird.h/2 <= 0){bird.y = bird.h/2; bird.vy=0}
+// pipe collisions
+for(let p of pipes){const inX = bird.x + bird.w/2 > p.x && bird.x - bird.w/2 < p.x+PIPE_W; if(inX){ if(bird.y - bird.h/2 < p.top || bird.y + bird.h/2 > p.top + GAP){die()} }}
+}
+
+function die(){if(gameOver) return;playHit();gameOver=true;running=false;document.getElementById('goTitle').textContent='Game Over';finalScore.textContent='Score: '+score+'  High: '+high;gameOverPanel.style.display='block';gameOverPanel.style.pointerEvents='auto'}
+
+function draw(){// clear
+ctx.clearRect(0,0,W,H);
+// background sky gradient
+const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#bfe8ff');g.addColorStop(1,'#87ceeb');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+// pipes
+ctx.fillStyle='rgb(46,139,87)';for(let p of pipes){ctx.fillRect(p.x,0,PIPE_W,p.top);ctx.fillRect(p.x,p.top+GAP,PIPE_W,H-p.top-GAP-GROUND_H); // pipe caps
+ctx.fillStyle='#246949';ctx.fillRect(p.x, p.top-12, PIPE_W, 12);ctx.fillRect(p.x, p.top+GAP, PIPE_W, 12);ctx.fillStyle='rgb(46,139,87)';}
+// ground
+ctx.fillStyle='rgb(210,180,140)';ctx.fillRect(0,H-GROUND_H,W,GROUND_H);
+// bird
+ctx.save();ctx.translate(bird.x, bird.y);ctx.rotate(bird.rot);
+// body
+ctx.fillStyle='rgb(255,221,87)';ctx.beginPath();ctx.ellipse(0,0,bird.w/2,bird.h/2,0,0,Math.PI*2);ctx.fill();
+// wing
+ctx.fillStyle='#f0c941';ctx.beginPath();ctx.ellipse(-2,4,10,6,Math.PI/6,0,Math.PI*2);ctx.fill();
+// beak
+ctx.fillStyle='#ff8a00';ctx.beginPath();ctx.moveTo(bird.w/2-2,0);ctx.lineTo(bird.w/2+10,4);ctx.lineTo(bird.w/2+10,-4);ctx.closePath();ctx.fill();
+ctx.restore();
+// UI text small on canvas
+ctx.fillStyle='rgba(0,0,0,0.12)';ctx.font='12px sans-serif';ctx.fillText('FloopyFly',10,H-20);
+}
+
+function loop(){update();draw();requestAnimationFrame(loop);}loop();
+
+// initialize high display and start visible panel
+highUI.textContent = 'High: '+high;scoreUI.textContent='Score: 0';
+// give start overlay pointer events
+startPanel.style.pointerEvents='auto';
+</script>
+</body>
+</html>
